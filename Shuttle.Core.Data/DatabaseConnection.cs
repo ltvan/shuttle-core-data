@@ -10,21 +10,27 @@ namespace Shuttle.Core.Data
         private readonly IDbCommandFactory _dbCommandFactory;
         private readonly IDatabaseConnectionCache _databaseConnectionCache;
         private readonly ILog _log;
+        private readonly bool _ownedConnection;
+        private readonly bool _ownedTransaction;
 
         private bool disposed;
 
-        public DatabaseConnection(DataSource dataSource, IDbConnection connection, IDbCommandFactory dbCommandFactory, IDatabaseConnectionCache databaseConnectionCache)
+        public DatabaseConnection(DataSource dataSource, IDbConnection connection, IDbCommandFactory dbCommandFactory, 
+            IDatabaseConnectionCache databaseConnectionCache, bool ownedConnection = true, IDbTransaction currentTransaction = null)
         {
-			Guard.AgainstNull(dataSource, "dataSource");
-			Guard.AgainstNull(connection, "connection");
-			Guard.AgainstNull(dbCommandFactory, "dbCommandFactory");
-			Guard.AgainstNull(databaseConnectionCache, "databaseConnectionCache");
+            Guard.AgainstNull(dataSource, "dataSource");
+            Guard.AgainstNull(connection, "connection");
+            Guard.AgainstNull(dbCommandFactory, "dbCommandFactory");
+            Guard.AgainstNull(databaseConnectionCache, "databaseConnectionCache");
 
             _dataSource = dataSource;
             _dbCommandFactory = dbCommandFactory;
             _databaseConnectionCache = databaseConnectionCache;
 
             Connection = connection;
+            _ownedConnection = ownedConnection;
+            Transaction = currentTransaction;
+            _ownedTransaction = currentTransaction == null;
 
             _log = Log.For(this);
 
@@ -32,15 +38,15 @@ namespace Shuttle.Core.Data
 
             try
             {
-	            if (connection.State == ConnectionState.Closed)
-	            {
-		            Connection.Open();
-					_log.Verbose(string.Format(DataResources.DbConnectionOpened, dataSource.Name));
-				}
-	            else
-	            {
-					_log.Verbose(string.Format(DataResources.DbConnectionAlreadyOpen, dataSource.Name));
-	            }
+                if (connection.State == ConnectionState.Closed)
+                {
+                    Connection.Open();
+                    _log.Verbose(string.Format(DataResources.DbConnectionOpened, dataSource.Name));
+                }
+                else
+                {
+                    _log.Verbose(string.Format(DataResources.DbConnectionAlreadyOpen, dataSource.Name));
+                }
             }
             catch (Exception ex)
             {
@@ -79,7 +85,7 @@ namespace Shuttle.Core.Data
 
         public void CommitTransaction()
         {
-            if (!HasTransaction)
+            if (!HasTransaction || !_ownedTransaction)
             {
                 return;
             }
@@ -104,11 +110,14 @@ namespace Shuttle.Core.Data
 
             if (disposing)
             {
-                if (HasTransaction)
+                if (HasTransaction && _ownedTransaction)
                 {
                     Transaction.Rollback();
                 }
-                Connection.Dispose();
+                if (_ownedConnection)
+                {
+                    Connection.Dispose();
+                }
                 _databaseConnectionCache.Remove(_dataSource);
             }
 
